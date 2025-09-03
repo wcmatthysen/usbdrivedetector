@@ -30,14 +30,14 @@ public class WindowsStorageDeviceDetectorTest {
         commandExecutor = mock(CommandExecutor.class);
 
         //System.setenv("WINDIR");
-        victim = new WindowsStorageDeviceDetector("C:\\WINDOWS", commandExecutor);
+        victim = new WindowsStorageDeviceDetector(commandExecutor);
     }
 
     @Test
     public void testGetStorageDevicesWithoutRemovableDevices() throws IOException {
         // given
-        when(commandExecutor.executeCommand(argThat(new Contains("wmic"))))
-                .thenAnswer(ignore -> new InputStreamProcessor(TestUtils.getInputStreamClassPath("windows/wmic-empty.txt")));
+        when(commandExecutor.executeCommand(argThat(new Contains("Get-CIMInstance"))))
+                .thenAnswer(ignore -> new InputStreamProcessor(TestUtils.getInputStreamClassPath("windows/powershell-empty.txt")));
 
         // when
         List<USBStorageDevice> devicesList = victim.getStorageDevices();
@@ -45,7 +45,7 @@ public class WindowsStorageDeviceDetectorTest {
         // then
         assertTrue(devicesList.isEmpty());
 
-        verify(commandExecutor, times(1)).executeCommand("C:\\WINDOWS\\System32\\wbem\\wmic.exe logicaldisk where drivetype=2 get DeviceID,VolumeSerialNumber,VolumeName");
+        verify(commandExecutor, times(1)).executeCommand(WindowsStorageDeviceDetector.CMD_LOGICAL_DISK);
     }
 
 
@@ -55,7 +55,7 @@ public class WindowsStorageDeviceDetectorTest {
         String systemDrive = System.getenv("SystemDrive"); // The system drive is used to emulate a removable drive
         File systemDriveFile = new File(systemDrive + File.separatorChar);
 
-        when(commandExecutor.executeCommand(argThat(new Contains("wmic"))))
+        when(commandExecutor.executeCommand(argThat(new Contains("Get-CIMInstance"))))
                 //.thenAnswer(ignore -> new InputStreamProcessor(TestUtils.getInputStreamClassPath("windows/wmic.txt")));
                 .thenAnswer(ignore -> new InputStreamProcessor(new ByteArrayInputStream(
                         ("DeviceID  VolumeName  VolumeSerialNumber\n" +
@@ -73,7 +73,7 @@ public class WindowsStorageDeviceDetectorTest {
         assertEquals("3029A30E", devicesList.get(0).getUuid());
 
 
-        verify(commandExecutor, times(1)).executeCommand("C:\\WINDOWS\\System32\\wbem\\wmic.exe logicaldisk where drivetype=2 get DeviceID,VolumeSerialNumber,VolumeName");
+        verify(commandExecutor, times(1)).executeCommand(WindowsStorageDeviceDetector.CMD_LOGICAL_DISK);
     }
 
 }

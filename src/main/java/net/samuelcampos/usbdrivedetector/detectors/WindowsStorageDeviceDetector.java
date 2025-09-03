@@ -33,40 +33,29 @@ import java.util.List;
 @Slf4j
 public class WindowsStorageDeviceDetector extends AbstractStorageDeviceDetector {
 
-    private static final String WMIC_PATH = "\\System32\\wbem\\wmic.exe";
+    static final String CMD_LOGICAL_DISK = "Get-CIMInstance -query 'select * from Win32_LogicalDisk where drivetype=2' | " +
+        "Select-Object DeviceID, VolumeName, VolumeSerialNumber";
 
-    /**
-     * wmic logicaldisk where drivetype=2 get description,deviceid,volumename
-     */
-    private static final String CMD_WMI_ARGS = "logicaldisk where drivetype=2 get DeviceID,VolumeSerialNumber,VolumeName";
-
-    private final String winDir;
-
-    protected WindowsStorageDeviceDetector(final String winDir, final CommandExecutor commandExecutor) {
+    protected WindowsStorageDeviceDetector(final CommandExecutor commandExecutor) {
         super(commandExecutor);
-        this.winDir = winDir;
-    }
-
-    private String getWmicCommand() {
-        return winDir + WMIC_PATH + " " + CMD_WMI_ARGS;
     }
 
     @Override
     public List<USBStorageDevice> getStorageDevices() {
         final ArrayList<USBStorageDevice> listDevices = new ArrayList<>();
 
-        try (final OutputProcessor commandOutputProcessor = commandExecutor.executeCommand(getWmicCommand())) {
+        try (final OutputProcessor commandOutputProcessor = commandExecutor.executeCommand(CMD_LOGICAL_DISK)) {
             commandOutputProcessor.processOutput(outputLine -> {
 
         	final String[] parts = outputLine.split(" ");
 
-                if(parts.length > 1 && !parts[0].isEmpty() && !parts[0].equals("DeviceID") && !parts[0].equals(parts[parts.length - 1])) {
+                if (parts.length > 1 && !parts[0].isEmpty() && !isPartOfHeader(parts) && !parts[0].equals(parts[parts.length - 1])) {
                 	final String rootPath = parts[0] + File.separatorChar;
                     final String uuid = parts[parts.length - 1];
                     String volumeName = parseVolumeName(parts);
                     if (volumeName.isEmpty())
                     {
-                    	// if the volume label via WMIC is blank, lets fall-back on 
+                    	// if the volume label is blank, lets fall-back on
                     	// FileSystemView.getSystemDisplayName(File) to derive a user-friendly
                     	// localised generic name (eg. 'USB Drive')
                     	volumeName = getDeviceName(rootPath);
@@ -82,6 +71,10 @@ public class WindowsStorageDeviceDetector extends AbstractStorageDeviceDetector 
         }
 
         return listDevices;
+    }
+
+    private boolean isPartOfHeader(String[] parts) {
+        return parts[0].equals("DeviceID") || parts[0].equals("--------");
     }
 
     private String parseVolumeName(String[] parts) {
