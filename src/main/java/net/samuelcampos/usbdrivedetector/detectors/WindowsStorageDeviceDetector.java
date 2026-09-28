@@ -33,8 +33,17 @@ import java.util.List;
 @Slf4j
 public class WindowsStorageDeviceDetector extends AbstractStorageDeviceDetector {
 
-    static final String CMD_LOGICAL_DISK = "Get-CIMInstance -query 'select * from Win32_LogicalDisk where drivetype=2' | " +
-        "Select-Object DeviceID, VolumeName, VolumeSerialNumber";
+    /*
+     * The powershell command returns the connected USB drives in csv format.
+     * 
+     * e.g.
+     * 
+     * "DeviceID","VolumeName","VolumeSerialNumber"
+     * "D:","SD CARD","3ED06668"
+     * "E:","SD CARD2","3ED06669"
+     */
+    static final String CMD_LOGICAL_DISK = "Get-CIMInstance -query 'select * from Win32_LogicalDisk where drivetype=2' | "
+            + "Select-Object DeviceID, VolumeName, VolumeSerialNumber | " + "ConvertTo-Csv -NoTypeInformation";
 
     protected WindowsStorageDeviceDetector(final CommandExecutor commandExecutor) {
         super(commandExecutor);
@@ -47,12 +56,17 @@ public class WindowsStorageDeviceDetector extends AbstractStorageDeviceDetector 
         try (final OutputProcessor commandOutputProcessor = commandExecutor.executeCommand(CMD_LOGICAL_DISK)) {
             commandOutputProcessor.processOutput(outputLine -> {
 
-        	final String[] parts = outputLine.split(" ");
+            // Split on "\",\"" and not just "," so that lines with extra comma in volume name don't split.
+        	final String[] parts = outputLine.split("\",\"");
 
                 if (parts.length > 1 && !parts[0].isEmpty() && !isPartOfHeader(parts) && !parts[0].equals(parts[parts.length - 1])) {
-                	final String rootPath = parts[0] + File.separatorChar;
-                    final String uuid = parts[parts.length - 1];
-                    String volumeName = parseVolumeName(parts);
+                    
+                    String deviceId = unquoteCsvField(parts[0]);
+                    String volumeName = unquoteCsvField(parts[1]);
+                    final String uuid = unquoteCsvField(parts[parts.length - 1]);
+
+                    final String rootPath = deviceId + File.separatorChar;
+ 
                     if (volumeName.isEmpty())
                     {
                     	// if the volume label is blank, lets fall-back on
@@ -60,9 +74,10 @@ public class WindowsStorageDeviceDetector extends AbstractStorageDeviceDetector 
                     	// localised generic name (eg. 'USB Drive')
                     	volumeName = getDeviceName(rootPath);
                     }
-                    
+
                     getUSBDevice(rootPath, volumeName, rootPath, uuid)
                             .ifPresent(listDevices::add);
+                    
                 }
             });
 
@@ -73,36 +88,41 @@ public class WindowsStorageDeviceDetector extends AbstractStorageDeviceDetector 
         return listDevices;
     }
 
-    private boolean isPartOfHeader(String[] parts) {
-        return parts[0].equals("DeviceID") || parts[0].equals("--------");
+    /**
+     * Remove the double quotes from the csv field allowing for the edge case where
+     * the field name itsself contains double quotes.
+     *
+     * e.g. 
+     * 
+     *  "My USB Drive" -> My USB Drive 
+     * 
+     *  ""Bob's" USB Drive" -> "Bob's" USB Drive
+     * 
+     * @param field the field to unquote
+     * @return the unquoted field
+     */
+    private static String unquoteCsvField(String field) {
+        String result = field;
+
+        if (result.startsWith("\"")) 
+        {
+            result = result.substring(1);
+        }
+
+        if (result.endsWith("\"")) 
+        {
+            result = result.substring(0, result.length() - 1);
+        }
+
+        // CSV escaped quote
+        result = result.replace("\"\"", "\"");
+
+        return result;
     }
 
-    private String parseVolumeName(String[] parts) {
-    	StringBuilder volumeLabel = new StringBuilder();
-    	// in our array of strings, the device ID will be at first position
-    	// the volume serial number will be in the final position, and all 
-    	// other elements in the array will either be empty string (multiple 
-    	// occurrences), or parts of the volume label (if there is a volume 
-    	// label at all)
-    	for (int i = 1; i < parts.length-1; i++) {
-			if (!parts[i].isEmpty())
-			{
-				if (volumeLabel.length() > 0)
-				{
-					// if we had a previous word in our volume label, then the label
-					// is made up of multiple white-space separate words => let's
-					// add back in the required whitespace in the volume label
-					// between the word parts
-					volumeLabel.append(" ");
-				}
-				volumeLabel.append(parts[i]);
-			}
-		}
-
-    	// note: if there is NO label on the volume then none will be found in
-    	// the array and empty string will be returned
-		return volumeLabel.toString();
-	}
+    private boolean isPartOfHeader(String[] parts) {
+        return parts[0].startsWith("\"DeviceID\"");
+    }
 
 	private String getDeviceName(final String rootPath) {
         final File f = new File(rootPath);

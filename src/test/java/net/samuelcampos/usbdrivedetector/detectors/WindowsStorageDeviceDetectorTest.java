@@ -57,9 +57,10 @@ public class WindowsStorageDeviceDetectorTest {
 
         when(commandExecutor.executeCommand(argThat(new Contains("Get-CIMInstance"))))
                 //.thenAnswer(ignore -> new InputStreamProcessor(TestUtils.getInputStreamClassPath("windows/wmic.txt")));
+                // We have DeviceID and VolumeSerialNumber but an empty volume name
                 .thenAnswer(ignore -> new InputStreamProcessor(new ByteArrayInputStream(
-                        ("DeviceID  VolumeName  VolumeSerialNumber\n" +
-                        systemDrive + "                    3029A30E").getBytes(StandardCharsets.UTF_8)
+                        ("\"DeviceID\",\"VolumeName\",\"VolumeSerialNumber\"\n" +
+                                "\"" + systemDrive + "\"," + "\"\",\"3029A30E\"").getBytes(StandardCharsets.UTF_8)
                 )));
 
         // when
@@ -68,6 +69,7 @@ public class WindowsStorageDeviceDetectorTest {
         // then
         assertEquals(1, devicesList.size());
         assertEquals(systemDriveFile.getPath(), devicesList.get(0).getRootDirectory().getPath());
+        // assert that in the case of an empty volume name, we fall back on the system display name.
         assertTrue(FileSystemView.getFileSystemView().getSystemDisplayName(systemDriveFile).startsWith(devicesList.get(0).getDeviceName()));
         assertEquals(systemDriveFile.getPath(), devicesList.get(0).getDevice());
         assertEquals("3029A30E", devicesList.get(0).getUuid());
@@ -76,4 +78,78 @@ public class WindowsStorageDeviceDetectorTest {
         verify(commandExecutor, times(1)).executeCommand(WindowsStorageDeviceDetector.CMD_LOGICAL_DISK);
     }
 
+    @Test
+    public void testGetStorageDevicesWithVolumeName() throws IOException {
+        String systemDrive = System.getenv("SystemDrive");
+
+        when(commandExecutor.executeCommand(argThat(new Contains("Get-CIMInstance"))))
+                .thenAnswer(ignore -> new InputStreamProcessor(new ByteArrayInputStream(
+                        ("\"DeviceID\",\"VolumeName\",\"VolumeSerialNumber\"\n" +
+                         "\"" + systemDrive + "\",\"My USB Drive\",\"3029A30E\"")
+                                .getBytes(StandardCharsets.UTF_8)
+                )));
+
+        List<USBStorageDevice> devicesList = victim.getStorageDevices();
+
+        assertEquals(1, devicesList.size());
+        assertEquals("My USB Drive", devicesList.get(0).getDeviceName());
+    }
+    
+    @Test
+    public void testGetMultipleStorageDevices() throws IOException {
+        String systemDrive = System.getenv("SystemDrive");
+        when(commandExecutor.executeCommand(argThat(new Contains("Get-CIMInstance"))))
+                .thenAnswer(ignore -> new InputStreamProcessor(new ByteArrayInputStream(
+                        (
+                        "\"DeviceID\",\"VolumeName\",\"VolumeSerialNumber\"\n" +
+                                "\"" + systemDrive + "\",\"USB1\",\"1111\"\n" +
+                                "\"" + systemDrive + "\",\"USB2\",\"2222\""
+                        ).getBytes(StandardCharsets.UTF_8)
+                )));
+
+        List<USBStorageDevice> devicesList = victim.getStorageDevices();
+
+        assertEquals(2, devicesList.size());
+
+        assertEquals("USB1", devicesList.get(0).getDeviceName());
+        assertEquals("1111", devicesList.get(0).getUuid());
+
+        assertEquals("USB2", devicesList.get(1).getDeviceName());
+        assertEquals("2222", devicesList.get(1).getUuid());
+    }
+    
+    @Test
+    public void testGetStorageDevicesWithCommaInVolumeName() throws IOException {
+        String systemDrive = System.getenv("SystemDrive");
+
+        when(commandExecutor.executeCommand(argThat(new Contains("Get-CIMInstance"))))
+                .thenAnswer(ignore -> new InputStreamProcessor(new ByteArrayInputStream(
+                        ("\"DeviceID\",\"VolumeName\",\"VolumeSerialNumber\"\n" +
+                         "\"" + systemDrive + "\",\"Backup, Photos, Videos\",\"3029A30E\"")
+                                .getBytes(StandardCharsets.UTF_8)
+                )));
+
+        List<USBStorageDevice> devicesList = victim.getStorageDevices();
+
+        assertEquals(1, devicesList.size());
+        assertEquals("Backup, Photos, Videos", devicesList.get(0).getDeviceName());
+    }
+    
+    @Test
+    public void testGetStorageDevicesWithDoubleQuotesInVolumeName() throws IOException {
+        String systemDrive = System.getenv("SystemDrive");
+
+        when(commandExecutor.executeCommand(argThat(new Contains("Get-CIMInstance"))))
+                .thenAnswer(ignore -> new InputStreamProcessor(new ByteArrayInputStream(
+                        ("\"DeviceID\",\"VolumeName\",\"VolumeSerialNumber\"\n" +
+                         "\"" + systemDrive + "\",\"Bob's \"\"Important\"\" Backup\",\"3029A30E\"")
+                                .getBytes(StandardCharsets.UTF_8)
+                )));
+
+        List<USBStorageDevice> devicesList = victim.getStorageDevices();
+
+        assertEquals(1, devicesList.size());
+        assertEquals("Bob's \"Important\" Backup", devicesList.get(0).getDeviceName());
+        assertEquals("3029A30E", devicesList.get(0).getUuid());
+    }    
 }
